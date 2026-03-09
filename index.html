@@ -169,13 +169,10 @@
             newLayout.rows === layout.rows &&
             Math.abs(newLayout.u - layout.u) < 0.1;
 
-        if (isFirstRender) {
-            // First load: animate all marks with stagger
+        if (isFirstRender || !canIncrement) {
+            // Full re-render: animate all marks with stagger
             fullRender(totalMarks, newLayout, true);
             isFirstRender = false;
-        } else if (!canIncrement) {
-            // Layout changed: full re-render, animate last mark
-            fullRender(totalMarks, newLayout, false);
         } else {
             // Same layout: just append new marks with animation
             for (let i = renderedCount; i < totalMarks; i++) {
