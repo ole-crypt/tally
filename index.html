@@ -37,6 +37,8 @@
     let renderedCount = 0;
     let layout = null;
     let isFirstRender = true;
+    let isProgressive = false;
+    let progressiveId = 0;
 
     // ═══ Layout calculator ═══
     function calcLayout(numGroups) {
@@ -129,33 +131,56 @@
         return el;
     }
 
-    // ═══ Full re-render (when layout changes) ═══
-    function fullRender(totalMarks, newLayout, animateAll) {
+    // ═══ Instant full re-render ═══
+    function instantRender(totalMarks, newLayout) {
+        svg.innerHTML = '';
+        svg.setAttribute('viewBox', `0 0 ${newLayout.W} ${newLayout.H}`);
+        layout = newLayout;
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < totalMarks; i++) {
+            frag.appendChild(createMark(i, layout, false));
+        }
+        svg.appendChild(frag);
+        renderedCount = totalMarks;
+    }
+
+    // ═══ Progressive wave render (first load) ═══
+    function waveRender(totalMarks, newLayout) {
+        progressiveId++;
+        const myId = progressiveId;
+        isProgressive = true;
+
         svg.innerHTML = '';
         svg.setAttribute('viewBox', `0 0 ${newLayout.W} ${newLayout.H}`);
         layout = newLayout;
 
-        const frag = document.createDocumentFragment();
+        const DURATION = 3000;
+        const BATCHES = 60;
+        const batchSize = Math.max(1, Math.ceil(totalMarks / BATCHES));
+        const batchDelay = DURATION / BATCHES;
+        let idx = 0;
 
-        if (animateAll) {
-            // Staggered drawing animation for initial load
-            const perDelay = Math.min(3 / totalMarks, 0.05);
-            for (let i = 0; i < totalMarks; i++) {
-                frag.appendChild(createMark(i, layout, true, i * perDelay));
+        function addBatch() {
+            if (myId !== progressiveId) return; // cancelled
+            const frag = document.createDocumentFragment();
+            const end = Math.min(idx + batchSize, totalMarks);
+            for (; idx < end; idx++) {
+                frag.appendChild(createMark(idx, layout, true, 0));
             }
-        } else {
-            // Static render + animate only the newest mark
-            for (let i = 0; i < totalMarks - 1; i++) {
-                frag.appendChild(createMark(i, layout, false));
+            svg.appendChild(frag);
+            renderedCount = idx;
+            if (idx < totalMarks) {
+                setTimeout(addBatch, batchDelay);
+            } else {
+                isProgressive = false;
             }
-            frag.appendChild(createMark(totalMarks - 1, layout, true, 0));
         }
-
-        svg.appendChild(frag);
+        addBatch();
     }
 
     // ═══ Main render loop ═══
     function render() {
+        if (isProgressive) return;
         const totalMarks = Math.max(0, Math.floor((Date.now() - BIRTH) / INTERVAL));
         if (totalMarks <= renderedCount) return;
         if (totalMarks === 0) return;
@@ -163,24 +188,25 @@
         const numGroups = Math.ceil(totalMarks / 5);
         const newLayout = calcLayout(numGroups);
 
-        // Check if layout is compatible with incremental add
         const canIncrement = layout &&
             newLayout.cols === layout.cols &&
             newLayout.rows === layout.rows &&
             Math.abs(newLayout.u - layout.u) < 0.1;
 
-        if (isFirstRender || !canIncrement) {
-            // Full re-render: animate all marks with stagger
-            fullRender(totalMarks, newLayout, true);
+        if (isFirstRender) {
+            // First load: progressive wave animation
+            waveRender(totalMarks, newLayout);
             isFirstRender = false;
+        } else if (!canIncrement) {
+            // Layout changed: instant re-render
+            instantRender(totalMarks, newLayout);
         } else {
-            // Same layout: just append new marks with animation
+            // Same layout: append new mark with animation
             for (let i = renderedCount; i < totalMarks; i++) {
                 svg.appendChild(createMark(i, layout, true, 0));
             }
+            renderedCount = totalMarks;
         }
-
-        renderedCount = totalMarks;
     }
 
     render();
@@ -188,6 +214,8 @@
     setInterval(render, 250);
 
     window.addEventListener('resize', () => {
+        progressiveId++;     // cancel any wave in progress
+        isProgressive = false;
         renderedCount = 0;
         layout = null;
         isFirstRender = false;
