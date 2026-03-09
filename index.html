@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Tally</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+        #svg { display: block; width: 100vw; height: 100vh; }
+        .m { stroke: #fff; stroke-linecap: round; fill: none; }
+        .a {
+            stroke-dasharray: var(--l);
+            stroke-dashoffset: var(--l);
+            animation: draw var(--dur) ease-out var(--del) forwards;
+        }
+        @keyframes draw { to { stroke-dashoffset: 0; } }
+    </style>
+</head>
+<body>
+<svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
+<script>
+(() => {
+    // ═══ CONFIG ═══
+    const INTERVAL = 1000;                                    // 1 mark per second
+    const BIRTH = new Date('2026-03-09T22:38:00').getTime();  // birth date
+
+    const GH = 1.7, GAP = 0.5;
+    const svg = document.getElementById('svg');
+    const ns = 'http://www.w3.org/2000/svg';
+
+    const rand = s => {
+        const x = Math.sin(s * 127.1 + 311.7) * 43758.5453;
+        return x - Math.floor(x);
+    };
+
+    let renderedCount = 0;
+    let layout = null;
+    let isFirstRender = true;
+
+    // ═══ Layout calculator ═══
+    function calcLayout(numGroups) {
+        const W = window.innerWidth;
+        const H = window.innerHeight;
+        const PAD = Math.min(W, H) * 0.04;
+        const aW = W - PAD * 2;
+        const aH = H - PAD * 2;
+
+        let bestU = 0, bestC = 1;
+        const est = Math.max(1, Math.round(Math.sqrt(numGroups * aW / (aH * GH))));
+        for (let c = Math.max(1, est - 50); c <= Math.min(numGroups, est + 50); c++) {
+            const r = Math.ceil(numGroups / c);
+            const u = Math.min(
+                aW / (c + (c - 1) * GAP),
+                aH / (r * GH + (r - 1) * GAP)
+            );
+            if (u > bestU) { bestU = u; bestC = c; }
+        }
+
+        const cols = bestC;
+        const rows = Math.ceil(numGroups / cols);
+        const u = bestU;
+        const gridW = cols * u + (cols - 1) * u * GAP;
+        const gridH = rows * u * GH + (rows - 1) * u * GAP;
+
+        return {
+            W, H, u, cols, rows,
+            ox: (W - gridW) / 2,
+            oy: (H - gridH) / 2,
+            sw: Math.max(1.2, u * 0.05)
+        };
+    }
+
+    // ═══ Create a single mark SVG element ═══
+    function createMark(markIndex, lay, animate, animDelay) {
+        const groupIndex = Math.floor(markIndex / 5);
+        const posInGroup = markIndex % 5;
+        const col = groupIndex % lay.cols;
+        const row = Math.floor(groupIndex / lay.cols);
+        const gx = lay.ox + col * lay.u * (1 + GAP);
+        const gy = lay.oy + row * lay.u * (GH + GAP);
+        const gh = lay.u * GH;
+        const u = lay.u;
+
+        let x1, y1, x2, y2, dur;
+
+        if (posInGroup < 4) {
+            const vPos = [0.15, 0.38, 0.62, 0.85];
+            const r1 = rand(markIndex) - 0.5;
+            const r2 = rand(markIndex + 7e3) - 0.5;
+            const r3 = rand(markIndex + 5e3) - 0.5;
+            const r4 = rand(markIndex + 3e3) - 0.5;
+
+            x1 = gx + u * vPos[posInGroup] + r1 * u * 0.04;
+            y1 = gy + r2 * gh * 0.04;
+            x2 = gx + u * vPos[posInGroup] + r3 * u * 0.05;
+            y2 = gy + gh + r4 * gh * 0.04;
+            dur = '0.25s';
+        } else {
+            const r1 = rand(markIndex) - 0.5;
+            const r2 = rand(markIndex + 7e3) - 0.5;
+
+            x1 = gx - u * 0.03 + r1 * u * 0.03;
+            y1 = gy + gh * 0.82 + r2 * gh * 0.04;
+            x2 = gx + u * 1.03 + r1 * u * 0.03;
+            y2 = gy + gh * 0.15 + r2 * gh * 0.04;
+            dur = '0.2s';
+        }
+
+        const len = Math.hypot(x2 - x1, y2 - y1);
+        const lsw = lay.sw + (rand(markIndex + 9e3) - 0.5) * lay.sw * 0.2;
+
+        const el = document.createElementNS(ns, 'line');
+        el.setAttribute('x1', x1);
+        el.setAttribute('y1', y1);
+        el.setAttribute('x2', x2);
+        el.setAttribute('y2', y2);
+        el.setAttribute('stroke-width', lsw);
+
+        if (animate) {
+            el.setAttribute('class', 'm a');
+            el.style.setProperty('--l', len);
+            el.style.setProperty('--dur', dur);
+            el.style.setProperty('--del', (animDelay || 0) + 's');
+        } else {
+            el.setAttribute('class', 'm');
+        }
+
+        return el;
+    }
+
+    // ═══ Full re-render (when layout changes) ═══
+    function fullRender(totalMarks, newLayout, animateAll) {
+        svg.innerHTML = '';
+        svg.setAttribute('viewBox', `0 0 ${newLayout.W} ${newLayout.H}`);
+        layout = newLayout;
+
+        const frag = document.createDocumentFragment();
+
+        if (animateAll) {
+            // Staggered drawing animation for initial load
+            const perDelay = Math.min(3 / totalMarks, 0.05);
+            for (let i = 0; i < totalMarks; i++) {
+                frag.appendChild(createMark(i, layout, true, i * perDelay));
+            }
+        } else {
+            // Static render + animate only the newest mark
+            for (let i = 0; i < totalMarks - 1; i++) {
+                frag.appendChild(createMark(i, layout, false));
+            }
+            frag.appendChild(createMark(totalMarks - 1, layout, true, 0));
+        }
+
+        svg.appendChild(frag);
+    }
+
+    // ═══ Main render loop ═══
+    function render() {
+        const totalMarks = Math.max(0, Math.floor((Date.now() - BIRTH) / INTERVAL));
+        if (totalMarks <= renderedCount) return;
+        if (totalMarks === 0) return;
+
+        const numGroups = Math.ceil(totalMarks / 5);
+        const newLayout = calcLayout(numGroups);
+
+        // Check if layout is compatible with incremental add
+        const canIncrement = layout &&
+            newLayout.cols === layout.cols &&
+            newLayout.rows === layout.rows &&
+            Math.abs(newLayout.u - layout.u) < 0.1;
+
+        if (isFirstRender) {
+            // First load: animate all marks with stagger
+            fullRender(totalMarks, newLayout, true);
+            isFirstRender = false;
+        } else if (!canIncrement) {
+            // Layout changed: full re-render, animate last mark
+            fullRender(totalMarks, newLayout, false);
+        } else {
+            // Same layout: just append new marks with animation
+            for (let i = renderedCount; i < totalMarks; i++) {
+                svg.appendChild(createMark(i, layout, true, 0));
+            }
+        }
+
+        renderedCount = totalMarks;
+    }
+
+    render();
+
+    setInterval(render, 250);
+
+    window.addEventListener('resize', () => {
+        renderedCount = 0;
+        layout = null;
+        isFirstRender = false;
+        render();
+    });
+})();
+</script>
+</body>
+</html>
