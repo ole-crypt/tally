@@ -6,8 +6,8 @@
     <title>Tally</title>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-        #svg { display: block; width: 100vw; height: 100vh; }
+        html, body { width: 100%; min-height: 100vh; background: #000; overflow-x: hidden; }
+        #svg { display: block; width: 100vw; min-height: 100vh; }
         .m { stroke: #fff; stroke-linecap: round; fill: none; }
         .a {
             stroke-dasharray: var(--l);
@@ -41,13 +41,16 @@
     let progressiveId = 0;
 
     // ═══ Layout calculator ═══
+    const MIN_U = 25; // minimum group width before scrolling kicks in
+
     function calcLayout(numGroups) {
         const W = window.innerWidth;
-        const H = window.innerHeight;
-        const PAD = Math.min(W, H) * 0.04;
+        const vH = window.innerHeight;
+        const PAD = Math.min(W, vH) * 0.04;
         const aW = W - PAD * 2;
-        const aH = H - PAD * 2;
+        const aH = vH - PAD * 2;
 
+        // Try to fit everything on one screen (shrink to fit)
         let bestU = 0, bestC = 1;
         const est = Math.max(1, Math.round(Math.sqrt(numGroups * aW / (aH * GH))));
         for (let c = Math.max(1, est - 50); c <= Math.min(numGroups, est + 50); c++) {
@@ -59,16 +62,33 @@
             if (u > bestU) { bestU = u; bestC = c; }
         }
 
-        const cols = bestC;
+        if (bestU >= MIN_U) {
+            // Fits on one screen at readable size
+            const cols = bestC;
+            const rows = Math.ceil(numGroups / cols);
+            const u = bestU;
+            const gridW = cols * u + (cols - 1) * u * GAP;
+            const gridH = rows * u * GH + (rows - 1) * u * GAP;
+            return {
+                W, H: vH, u, cols, rows,
+                ox: (W - gridW) / 2,
+                oy: (vH - gridH) / 2,
+                sw: Math.max(1.2, u * 0.05)
+            };
+        }
+
+        // Too many marks — scroll mode with minimum size
+        const cols = Math.min(numGroups, Math.max(3, Math.floor(aW / (MIN_U * (1 + GAP)))));
+        const u = aW / (cols + (cols - 1) * GAP);
         const rows = Math.ceil(numGroups / cols);
-        const u = bestU;
         const gridW = cols * u + (cols - 1) * u * GAP;
         const gridH = rows * u * GH + (rows - 1) * u * GAP;
+        const totalH = Math.max(vH, gridH + PAD * 2);
 
         return {
-            W, H, u, cols, rows,
+            W, H: totalH, u, cols, rows,
             ox: (W - gridW) / 2,
-            oy: (H - gridH) / 2,
+            oy: PAD,
             sw: Math.max(1.2, u * 0.05)
         };
     }
@@ -131,10 +151,15 @@
         return el;
     }
 
+    function setSvgSize(lay) {
+        svg.setAttribute('viewBox', `0 0 ${lay.W} ${lay.H}`);
+        svg.style.height = lay.H + 'px';
+    }
+
     // ═══ Instant full re-render ═══
     function instantRender(totalMarks, newLayout) {
         svg.innerHTML = '';
-        svg.setAttribute('viewBox', `0 0 ${newLayout.W} ${newLayout.H}`);
+        setSvgSize(newLayout);
         layout = newLayout;
         const frag = document.createDocumentFragment();
         for (let i = 0; i < totalMarks; i++) {
@@ -151,7 +176,7 @@
         isProgressive = true;
 
         svg.innerHTML = '';
-        svg.setAttribute('viewBox', `0 0 ${newLayout.W} ${newLayout.H}`);
+        setSvgSize(newLayout);
         layout = newLayout;
 
         const DURATION = 3000;
@@ -190,7 +215,6 @@
 
         const canIncrement = layout &&
             newLayout.cols === layout.cols &&
-            newLayout.rows === layout.rows &&
             Math.abs(newLayout.u - layout.u) < 0.1;
 
         if (isFirstRender) {
@@ -204,6 +228,12 @@
             // Same layout: append new mark with animation
             for (let i = renderedCount; i < totalMarks; i++) {
                 svg.appendChild(createMark(i, layout, true, 0));
+            }
+            // Grow SVG if new rows added
+            if (newLayout.H > layout.H) {
+                layout.rows = newLayout.rows;
+                layout.H = newLayout.H;
+                setSvgSize(layout);
             }
             renderedCount = totalMarks;
         }
